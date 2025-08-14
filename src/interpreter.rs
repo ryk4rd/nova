@@ -1,5 +1,6 @@
 use crate::parser::{Ast, Expr, Literal};
 use crate::tokenizer::TokenType;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -22,21 +23,27 @@ impl std::fmt::Display for Value {
 
 pub struct Interpreter {
     ast: Ast,
+    env: HashMap<String, Value>, // global environment
 }
 
 impl Interpreter {
-    pub fn new(ast: Ast) -> Self { Self { ast } }
+    pub fn new(ast: Ast) -> Self { Self { ast, env: HashMap::new() } }
 
     // Evaluate all top-level expressions, returning their values
-    pub fn interpret(&self) -> Vec<Value> {
-        self.ast
-            .nodes
-            .iter()
-            .map(|expr| self.eval(expr))
-            .collect()
+    pub fn interpret(&mut self) -> Vec<Value> {
+        // Move nodes out to avoid borrowing self while mutably using it in eval
+        let nodes = std::mem::take(&mut self.ast.nodes);
+        let mut results = Vec::new();
+        for expr in &nodes {
+            let v = self.eval(expr);
+            results.push(v);
+        }
+        // Put the nodes back so Interpreter can be reused if needed
+        self.ast.nodes = nodes;
+        results
     }
 
-    fn eval(&self, expr: &Expr) -> Value {
+    fn eval(&mut self, expr: &Expr) -> Value {
         match expr {
             Expr::Literal(lit) => match lit {
                 Literal::Number(s) => {
@@ -45,8 +52,19 @@ impl Interpreter {
                 }
                 Literal::String(s) => Value::String(s.clone()),
             },
-            Expr::Variable(name) => {
-                panic!("Variable '{}' not implemented (no environment)", name);
+            Expr::VarDecl { name, initializer } => {
+                let value = match initializer {
+                    Some(init) => self.eval(init),
+                    None => Value::Nil,
+                };
+                self.env.insert(name.clone(), value.clone());
+                Value::Nil
+            }
+            Expr::VarGet(name) => {
+                match self.env.get(name) {
+                    Some(v) => v.clone(),
+                    None => panic!("Undefined variable '{}'.", name),
+                }
             }
             Expr::Grouping(inner) => self.eval(inner),
             Expr::Unary { op, right } => {

@@ -21,8 +21,9 @@ fn main() {
     let tokens = tokenizer::scan(contents);
 
     let ast = Parser::new(tokens).parse();
-    let interp = Interpreter::new(ast);
-    let values = interp.interpret();
+    // dbg!(ast);
+    let mut interp = Interpreter::new(ast);
+    let _values = interp.interpret();
 }
 
 fn spawn_shell() {
@@ -43,7 +44,7 @@ fn spawn_shell() {
 
         let tokens = tokenizer::scan(line);
         let ast = Parser::new(tokens).parse();
-        let interp = Interpreter::new(ast);
+        let mut interp = Interpreter::new(ast);
         let values = interp.interpret();
         for v in values {
             if v != Value::Nil {

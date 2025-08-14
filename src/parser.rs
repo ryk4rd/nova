@@ -3,7 +3,8 @@ use crate::tokenizer::{Token, TokenType};
 #[derive(Debug)]
 pub enum Expr {
     Literal(Literal),
-    Variable(String),
+    VarDecl { name: String, initializer: Option<Box<Expr>> },
+    VarGet(String),
     Grouping(Box<Expr>),
     Unary { op: TokenType, right: Box<Expr> },
     Binary { left: Box<Expr>, op: TokenType, right: Box<Expr> },
@@ -48,9 +49,27 @@ impl Parser {
     }
 
     fn program(&mut self) -> Expr {
+        self.declaration()
+    }
+
+    fn declaration(&mut self) -> Expr {
+        if self.match_token(&[TokenType::Var]) {
+            return self.var_decl();
+        }
         self.statement()
     }
 
+    fn var_decl(&mut self) -> Expr {
+        // Expect an identifier after 'var'
+        self.consume(TokenType::Identifier, "variable name");
+        let name = self.previous().value().unwrap_or("").to_string();
+        // Optional initializer: '= expression'
+        if self.match_token(&[TokenType::Equal]) {
+            let value = self.expression();
+            return Expr::VarDecl { name, initializer: Some(Box::new(value)) };
+        }
+        Expr::VarDecl { name, initializer: None }
+    }
     fn statement(&mut self) -> Expr {
         if self.match_token(&[TokenType::Print]) {
             return self.print_statement();
@@ -66,7 +85,6 @@ impl Parser {
     fn expr_stmt(&mut self) -> Expr {
         self.expression()
     }
-
 
     fn expression(&mut self) -> Expr {
         self.equality()
@@ -137,7 +155,7 @@ impl Parser {
         }
         if self.match_token(&[TokenType::Identifier]) {
             let name = self.previous().value().unwrap_or("").to_string();
-            return Expr::Variable(name);
+            return Expr::VarGet(name);
         }
         if self.match_token(&[TokenType::LeftParen]) {
             let expr = self.expression();

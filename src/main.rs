@@ -4,9 +4,11 @@ use std::{
     fs
 };
 use crate::parser::Parser;
+use crate::interpreter::{Interpreter, Value};
 
 mod tokenizer;
 mod parser;
+mod interpreter;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -19,7 +21,8 @@ fn main() {
     let tokens = tokenizer::scan(contents);
 
     let ast = Parser::new(tokens).parse();
-    dbg!(ast);
+    let interp = Interpreter::new(ast);
+    let values = interp.interpret();
 }
 
 fn spawn_shell() {
@@ -40,6 +43,12 @@ fn spawn_shell() {
 
         let tokens = tokenizer::scan(line);
         let ast = Parser::new(tokens).parse();
-        dbg!(ast);
+        let interp = Interpreter::new(ast);
+        let values = interp.interpret();
+        for v in values {
+            if v != Value::Nil {
+                println!("{}", v);
+            }
+        }
     }
 }

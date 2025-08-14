@@ -5,14 +5,15 @@ use std::str::Chars;
 pub enum TokenType {
     Plus, Minus, Star, Slash, Bang, Equal, LeftParen, RightParen, LeftBracket, RightBracket,
 
-    EqualEqual, BangEqual, Semicolon, Comma, Colon,
-    Identifier, Number, String, Fn, If, Else, While, For, LeftCurly, RightCurly
+    EqualEqual, BangEqual, Semicolon, Comma, Colon, Dot, Less, LessEqual, Greater, GreaterEqual,
+    Identifier, Number, String, Fn, If, Else, While, For, LeftCurly, RightCurly, Print
 }
 
 #[derive(Debug, Clone)]
 pub struct Token {
     token_type: TokenType,
     pos: (u32, u32),
+
     value: Option<String>
 }
 
@@ -32,6 +33,22 @@ impl Token {
     }
 }
 
+
+fn consume_comment(chars: &mut Peekable<Chars<'_>>, pos: &mut (u32, u32)) {
+    // Consume the second '/'
+    chars.next();
+    *pos = (pos.0 + 1, pos.1);
+
+    // Consume until newline (do NOT consume the '\n')
+    while let Some(&ch) = chars.peek() {
+        if ch == '\n' {
+            break;
+        }
+        chars.next();
+        *pos = (pos.0 + 1, pos.1);
+    }
+}
+
 pub fn scan(input: String) -> Vec<Token> {
     let mut tokens: Vec<Token> = vec![];
 
@@ -46,7 +63,13 @@ pub fn scan(input: String) -> Vec<Token> {
             '+' => tokens.push(Token::new(TokenType::Plus, current_pos , None)),
             '-' => tokens.push(Token::new(TokenType::Minus, current_pos, None)),
             '*' => tokens.push(Token::new(TokenType::Star, current_pos, None)),
-            '/' => tokens.push(Token::new(TokenType::Slash, current_pos, None)),
+            '/' => {
+                if let Some('/') = chars.peek() {
+                    consume_comment(&mut chars, &mut current_pos);
+                } else {
+                    tokens.push(Token::new(TokenType::Slash, current_pos, None));
+                }
+            }
 
             // String literals
             '"' => tokens.push(scan_string('"', &mut chars, &mut current_pos)),
@@ -61,6 +84,7 @@ pub fn scan(input: String) -> Vec<Token> {
             ']' => tokens.push(Token::new(TokenType::RightBracket, current_pos, None)),
             ';' => tokens.push(Token::new(TokenType::Semicolon, current_pos, None)),
             ',' => tokens.push(Token::new(TokenType::Comma, current_pos, None)),
+            '.' => tokens.push(Token::new(TokenType::Dot, current_pos, None)),
             ':' => tokens.push(Token::new(TokenType::Colon, current_pos, None)),
 
             // Two-char operators and their single-char variants
@@ -72,6 +96,25 @@ pub fn scan(input: String) -> Vec<Token> {
                     tokens.push(Token::new(TokenType::Equal, current_pos, None));
                 }
             }
+
+            '<' => {
+                if let Some('=') = chars.peek() {
+                    chars.next(); // consume the second '='
+                    tokens.push(Token::new(TokenType::LessEqual, current_pos, None));
+                } else {
+                    tokens.push(Token::new(TokenType::Less, current_pos, None));
+                }
+            }
+
+            '>' => {
+                if let Some('=') = chars.peek() {
+                    chars.next(); // consume the second '='
+                    tokens.push(Token::new(TokenType::GreaterEqual, current_pos, None));
+                } else {
+                    tokens.push(Token::new(TokenType::Greater, current_pos, None));
+                }
+            }
+
             '!' => {
                 if let Some('=') = chars.peek() {
                     chars.next(); // consume the second '='
@@ -198,6 +241,7 @@ fn check_reserved_words(word: &str) -> Option<TokenType> {
         "else" => Some(TokenType::Else),
         "while" => Some(TokenType::While),
         "for" => Some(TokenType::For),
+        "print" => Some(TokenType::Print),
         _ => None,
     }
 }

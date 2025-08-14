@@ -7,6 +7,7 @@ pub enum Expr {
     Grouping(Box<Expr>),
     Unary { op: TokenType, right: Box<Expr> },
     Binary { left: Box<Expr>, op: TokenType, right: Box<Expr> },
+    Print(Box<Expr>),
 }
 
 #[derive(Debug)]
@@ -35,7 +36,7 @@ impl Parser {
         while !self.is_at_end() {
             // Parse an expression; if we fail to advance, break to avoid infinite loop
             let start = self.current;
-            let expr = self.expression();
+            let expr = self.program();
             nodes.push(expr);
             if self.current == start {
                 break;
@@ -46,12 +47,46 @@ impl Parser {
         Ast { nodes }
     }
 
-    fn expression(&mut self) -> Expr { self.equality() }
+    fn program(&mut self) -> Expr {
+        self.statement()
+    }
+
+    fn statement(&mut self) -> Expr {
+        if self.match_token(&[TokenType::Print]) {
+            return self.print_statement();
+        }
+        self.expr_stmt()
+    }
+    fn print_statement(&mut self) -> Expr {
+        let expr = self.expression();
+        Expr::Print(Box::new(expr))
+    }
+
+
+    fn expr_stmt(&mut self) -> Expr {
+        self.expression()
+    }
+
+
+    fn expression(&mut self) -> Expr {
+        self.equality()
+    }
 
     // == | !=
     fn equality(&mut self) -> Expr {
-        let mut expr = self.addition();
+        let mut expr = self.comparison();
         while self.match_token(&[TokenType::EqualEqual, TokenType::BangEqual]) {
+            let op = self.previous().token_type();
+            let right = self.comparison();
+            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };
+        }
+        expr
+    }
+
+    fn comparison(&mut self) -> Expr {
+        let mut expr = self.addition();
+        while self.match_token(&[TokenType::Greater, TokenType::GreaterEqual,
+            TokenType::Less, TokenType::LessEqual]) {
             let op = self.previous().token_type();
             let right = self.addition();
             expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };

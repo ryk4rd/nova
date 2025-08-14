@@ -1,0 +1,149 @@
+use crate::tokenizer::{Token, TokenType};
+
+#[derive(Debug)]
+pub enum Expr {
+    Literal(Literal),
+    Variable(String),
+    Grouping(Box<Expr>),
+    Unary { op: TokenType, right: Box<Expr> },
+    Binary { left: Box<Expr>, op: TokenType, right: Box<Expr> },
+}
+
+#[derive(Debug)]
+pub enum Literal {
+    Number(String),
+    String(String),
+}
+
+#[derive(Debug)]
+pub struct Ast {
+    pub nodes: Vec<Expr>,
+}
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    current: usize,
+}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, current: 0 }
+    }
+
+    pub fn parse(mut self) -> Ast {
+        let mut nodes = Vec::new();
+        while !self.is_at_end() {
+            // Parse an expression; if we fail to advance, break to avoid infinite loop
+            let start = self.current;
+            let expr = self.expression();
+            nodes.push(expr);
+            if self.current == start {
+                break;
+            }
+            // Optional: consume a semicolon between expressions if present
+            self.match_token(&[TokenType::Semicolon]);
+        }
+        Ast { nodes }
+    }
+
+    fn expression(&mut self) -> Expr { self.equality() }
+
+    // == | !=
+    fn equality(&mut self) -> Expr {
+        let mut expr = self.addition();
+        while self.match_token(&[TokenType::EqualEqual, TokenType::BangEqual]) {
+            let op = self.previous().token_type();
+            let right = self.addition();
+            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };
+        }
+        expr
+    }
+
+    // + | -
+    fn addition(&mut self) -> Expr {
+        let mut expr = self.term();
+        while self.match_token(&[TokenType::Plus, TokenType::Minus]) {
+            let op = self.previous().token_type();
+            let right = self.term();
+            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };
+        }
+        expr
+    }
+
+    // * | /
+    fn term(&mut self) -> Expr {
+        let mut expr = self.unary();
+        while self.match_token(&[TokenType::Star, TokenType::Slash]) {
+            let op = self.previous().token_type();
+            let right = self.unary();
+            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };
+        }
+        expr
+    }
+
+    // ! | -
+    fn unary(&mut self) -> Expr {
+        if self.match_token(&[TokenType::Bang, TokenType::Minus]) {
+            let op = self.previous().token_type();
+            let right = self.unary();
+            return Expr::Unary { op, right: Box::new(right) };
+        }
+        self.primary()
+    }
+
+    fn primary(&mut self) -> Expr {
+        if self.match_token(&[TokenType::Number]) {
+            let lex = self.previous().value().unwrap_or("").to_string();
+            return Expr::Literal(Literal::Number(lex));
+        }
+        if self.match_token(&[TokenType::String]) {
+            let lex = self.previous().value().unwrap_or("").to_string();
+            return Expr::Literal(Literal::String(lex));
+        }
+        if self.match_token(&[TokenType::Identifier]) {
+            let name = self.previous().value().unwrap_or("").to_string();
+            return Expr::Variable(name);
+        }
+        if self.match_token(&[TokenType::LeftParen]) {
+            let expr = self.expression();
+            self.consume(TokenType::RightParen, ")");
+            return Expr::Grouping(Box::new(expr));
+        }
+        // Fallback: if nothing matches, return a dummy literal from current token value
+        // or panic for now because grammar expects a primary
+        panic!("Expected expression at token index {}", self.current);
+    }
+
+    // utilities
+    fn match_token(&mut self, types: &[TokenType]) -> bool {
+        for &t in types {
+            if self.check(t) {
+                self.advance();
+                return true;
+            }
+        }
+        false
+    }
+
+    fn consume(&mut self, t: TokenType, _context: &str) {
+        if self.check(t) { self.advance(); return; }
+        panic!("Expected token {:?} before {} at index {}", t, _context, self.current);
+    }
+
+    fn check(&self, t: TokenType) -> bool {
+        if self.is_at_end() { return false; }
+        self.peek().token_type() == t
+    }
+
+    fn advance(&mut self) -> &Token {
+        if !self.is_at_end() { self.current += 1; }
+        self.previous_ref()
+    }
+
+    fn is_at_end(&self) -> bool { self.current >= self.tokens.len() }
+
+    fn peek(&self) -> &Token { &self.tokens[self.current] }
+
+    fn previous(&self) -> Token { self.tokens[self.current - 1].clone() }
+    fn previous_ref(&self) -> &Token { &self.tokens[self.current - 1] }
+}

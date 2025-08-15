@@ -43,6 +43,17 @@ impl Interpreter {
         results
     }
 
+    // Evaluate a provided AST using the current environment (useful for REPL)
+    pub fn interpret_with(&mut self, ast: Ast) -> Vec<Value> {
+        let nodes = ast.nodes;
+        let mut results = Vec::new();
+        for expr in &nodes {
+            let v = self.eval(expr);
+            results.push(v);
+        }
+        results
+    }
+
     fn eval(&mut self, expr: &Expr) -> Value {
         match expr {
             Expr::Literal(lit) => match lit {

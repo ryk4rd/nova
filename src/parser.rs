@@ -164,6 +164,7 @@ impl Parser {
         }
         // Fallback: if nothing matches, return a dummy literal from current token value
         // or panic for now because grammar expects a primary
+
         panic!("Expected expression at token index {}", self.current);
     }
 

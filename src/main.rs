@@ -3,7 +3,7 @@ use std::{
     io::{self, Write},
     fs
 };
-use crate::parser::Parser;
+use crate::parser::{Parser, Ast};
 use crate::interpreter::{Interpreter, Value};
 
 mod tokenizer;
@@ -29,6 +29,9 @@ fn main() {
 fn spawn_shell() {
     println!("Welcome to the nova shell! v0.1.");
 
+    // Persistent interpreter to keep environment across lines
+    let mut interp = Interpreter::new(Ast { nodes: vec![] });
+
     loop {
         let mut line = String::new();
 
@@ -44,8 +47,7 @@ fn spawn_shell() {
 
         let tokens = tokenizer::scan(line);
         let ast = Parser::new(tokens).parse();
-        let mut interp = Interpreter::new(ast);
-        let values = interp.interpret();
+        let values = interp.interpret_with(ast);
         for v in values {
             if v != Value::Nil {
                 println!("{}", v);

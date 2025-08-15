@@ -3,12 +3,14 @@ use crate::tokenizer::{Token, TokenType};
 #[derive(Debug)]
 pub enum Expr {
     Literal(Literal),
-    VarDecl { name: String, initializer: Option<Box<Expr>> },
     VarGet(String),
     Grouping(Box<Expr>),
     Unary { op: TokenType, right: Box<Expr> },
     Binary { left: Box<Expr>, op: TokenType, right: Box<Expr> },
     Print(Box<Expr>),
+    Assign { name: String, value: Box<Expr> },
+    If { cond: Box<Expr>, then: Box<Expr>, else_: Box<Option<Expr>> },
+    Block(Box<Vec<Expr>>),
 }
 
 #[derive(Debug)]
@@ -53,27 +55,19 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Expr {
-        if self.match_token(&[TokenType::Var]) {
-            return self.var_decl();
-        }
         self.statement()
     }
 
-    fn var_decl(&mut self) -> Expr {
-        // Expect an identifier after 'var'
-        self.consume(TokenType::Identifier, "variable name");
-        let name = self.previous().value().unwrap_or("").to_string();
-        // Optional initializer: '= expression'
-        if self.match_token(&[TokenType::Equal]) {
-            let value = self.expression();
-            return Expr::VarDecl { name, initializer: Some(Box::new(value)) };
-        }
-        Expr::VarDecl { name, initializer: None }
-    }
+
     fn statement(&mut self) -> Expr {
         if self.match_token(&[TokenType::Print]) {
             return self.print_statement();
         }
+
+        if self.match_token(&[TokenType::If]) {
+            return self.if_statement();
+        }
+
         self.expr_stmt()
     }
     fn print_statement(&mut self) -> Expr {
@@ -87,8 +81,31 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Expr {
-        self.equality()
+        self.assignment()
     }
+
+    fn assignment(&mut self) -> Expr {
+        let expr = self.equality();
+
+
+        if self.match_token(&[TokenType::Equal]) {
+            let equals = self.previous();
+            let value = self.assignment();
+            if let Expr::VarGet(name) = expr {
+                return Expr::Assign {name, value: Box::new(value) };
+            }
+            panic!("Invalid assignment target: {}", equals.value().unwrap_or(""));
+        }
+        expr
+    }
+
+    fn if_statement(&mut self) -> Expr {
+        let cond = self.expression();
+        let then = self.statement();
+        //let else_ = self.statement();
+        Expr::If { cond: Box::new(cond), then: Box::new(then), else_: Box::new(None) }
+    }
+
 
     // == | !=
     fn equality(&mut self) -> Expr {
@@ -162,9 +179,21 @@ impl Parser {
             self.consume(TokenType::RightParen, ")");
             return Expr::Grouping(Box::new(expr));
         }
+
+        if self.match_token(&[TokenType::LeftCurly]) {
+        
+            let mut exprs = vec![];
+
+            while !self.check(TokenType::RightCurly) {
+                exprs.push(self.declaration());
+            }
+            self.consume(TokenType::RightCurly, "}");
+            return Expr::Block(Box::new(exprs));
+        }
         // Fallback: if nothing matches, return a dummy literal from current token value
         // or panic for now because grammar expects a primary
 
+        dbg!(self.peek());
         panic!("Expected expression at token index {}", self.current);
     }
 

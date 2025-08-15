@@ -1,10 +1,12 @@
+//Pretty cool stuff
+name = "marcus"
+name = name + " andersson"
 
-//2+(2*3)
-2+2*3
-3*3
-4*4
 
-var name = "hej"
-var nothing
-name = "hejsan"
-print name
+if 1 == 1 {
+    age = 25
+    print "hejsan"
+    print age
+}
+
+age = 25

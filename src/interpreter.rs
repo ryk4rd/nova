@@ -63,20 +63,29 @@ impl Interpreter {
                 }
                 Literal::String(s) => Value::String(s.clone()),
             },
-            Expr::VarDecl { name, initializer } => {
-                let value = match initializer {
-                    Some(init) => self.eval(init),
-                    None => Value::Nil,
-                };
-                self.env.insert(name.clone(), value.clone());
+            Expr::If { cond, then, else_ } => {
+                let cond = self.eval(cond);
+                if cond == Value::Boolean(true) {
+                    self.eval(then)
+                } else {
+                    Value::Nil
+                }
+            }
+
+            Expr::Block(inner) => {
+                for expr in inner.iter() {
+                    self.eval(expr);
+                }
                 Value::Nil
             }
+
             Expr::VarGet(name) => {
                 match self.env.get(name) {
                     Some(v) => v.clone(),
                     None => panic!("Undefined variable '{}'.", name),
                 }
             }
+
             Expr::Grouping(inner) => self.eval(inner),
             Expr::Unary { op, right } => {
                 let rv = self.eval(right);
@@ -85,6 +94,11 @@ impl Interpreter {
                     TokenType::Bang => Value::Boolean(!self.is_truthy(&rv)),
                     _ => panic!("Unsupported unary operator: {:?}", op),
                 }
+            }
+            Expr::Assign { name, value } => {
+                let v = self.eval(value);
+                self.env.insert(name.clone(), v.clone());
+                Value::Nil
             }
             Expr::Print(expr) => {
                 let rv = self.eval(expr);

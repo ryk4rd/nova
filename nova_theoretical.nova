@@ -1,0 +1,52 @@
+// File called mylib.nova, imports mylib contents
+import mylib
+
+name = "Marcus"
+
+print(get_hello(name))
+
+if name == "marcus" {
+   print("name is marcus")
+}
+
+if name is string {
+   print("name is a string!")
+}
+
+
+fn get_hello(name) {
+    return "hello, " + name
+}
+
+//From mylib.nova
+do_something()
+
+person = Person("Marcus", 25)
+
+person.print()
+
+
+// file mylib.nova
+class Person {
+    prop name: string
+    prop age: int
+
+    fn Person(name, age) {
+        this.name = name
+        this.age = age
+    }
+
+    fn print() {
+        print("name: " + name + ", age: " + age)
+    }
+
+}
+
+fn do_something() {
+    do_another_thing()
+}
+
+fn do_another_thing() {
+    //....
+}
+

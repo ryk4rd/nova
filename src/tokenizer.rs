@@ -5,8 +5,9 @@ use std::str::Chars;
 pub enum TokenType {
     Plus, Minus, Star, Slash, Bang, Equal, LeftParen, RightParen, LeftBracket, RightBracket,
 
-    EqualEqual, BangEqual, Semicolon, Comma, Colon, Dot, Less, LessEqual, Greater, GreaterEqual,
-    Identifier, Number, String, Fn, If, Else, While, For, LeftCurly, RightCurly, Var, Return
+    EqualEqual, BangEqual, Semicolon, Comma, Colon, Dot, Ellipsis, Less, LessEqual, Greater, GreaterEqual,
+    Identifier, Number, String, Fn, If, Else, While, For, LeftCurly, RightCurly, Var, Return, Include,
+    StrType, IntType,
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +85,22 @@ pub fn scan(input: String) -> Vec<Token> {
             ']' => tokens.push(Token::new(TokenType::RightBracket, current_pos, None)),
             ';' => tokens.push(Token::new(TokenType::Semicolon, current_pos, None)),
             ',' => tokens.push(Token::new(TokenType::Comma, current_pos, None)),
-            '.' => tokens.push(Token::new(TokenType::Dot, current_pos, None)),
+            '.' => {
+                // Ellipsis '...'
+                let mut it = chars.clone();
+                let is_ellipsis = if let Some('.') = it.peek() {
+                    it.next();
+                    if let Some('.') = it.peek() { true } else { false }
+                } else { false };
+                if is_ellipsis {
+                    // consume the two additional '.'
+                    chars.next();
+                    chars.next();
+                    tokens.push(Token::new(TokenType::Ellipsis, current_pos, None));
+                } else {
+                    tokens.push(Token::new(TokenType::Dot, current_pos, None));
+                }
+            },
             ':' => tokens.push(Token::new(TokenType::Colon, current_pos, None)),
 
             // Two-char operators and their single-char variants
@@ -243,6 +259,9 @@ fn check_reserved_words(word: &str) -> Option<TokenType> {
         "for" => Some(TokenType::For),
         "var" => Some(TokenType::Var),
         "return" => Some(TokenType::Return),
+        "include" => Some(TokenType::Include),
+        "str" => Some(TokenType::StrType),
+        "int" => Some(TokenType::IntType),
         _ => None,
     }
 }

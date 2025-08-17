@@ -1,0 +1,7 @@
+fn foo(...xs) {
+    __rustc_println(xs)
+}
+
+foo(1, "a", 3)
+
+print("multi:", 10, 20, 30)

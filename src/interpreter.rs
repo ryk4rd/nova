@@ -1,23 +1,37 @@
-use crate::parser::{Ast, Expr, Literal};
-use crate::tokenizer::TokenType;
-use std::collections::HashMap;
+use crate::parser::{Ast, Expr, Literal, Parser};
+use crate::tokenizer::{self, TokenType};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::fs;
+use std::env;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
+    List(Vec<Value>),
     Function(Rc<Function>),
-    NativeFunction(fn(Vec<Value>) -> Value),
+    NativeFunction(Rc<NativeFn>),
     Nil,
 }
 
 #[derive(Debug)]
 pub struct Function {
     pub params: Vec<String>,
+    pub vararg: Option<String>,
     pub body: Rc<Expr>,
 }
+
+// Runtime error type and native function signature
+#[derive(Clone)]
+pub struct RuntimeError { pub message: String }
+impl RuntimeError { pub fn new(msg: impl Into<String>) -> Self { Self { message: msg.into() } } }
+impl std::fmt::Display for RuntimeError { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.message) } }
+impl std::fmt::Debug for RuntimeError { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "RuntimeError({})", self.message) } }
+
+pub type NativeFn = dyn Fn(&[Value]) -> Result<Value, RuntimeError>;
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
@@ -38,6 +52,14 @@ impl std::fmt::Display for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
             Value::Boolean(b) => write!(f, "{}", b),
+            Value::List(items) => {
+                write!(f, "[")?;
+                for (i, it) in items.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", it)?;
+                }
+                write!(f, "]")
+            }
             Value::Function(_) => write!(f, "<fn>"),
             Value::NativeFunction(_) => write!(f, "<native-fn>"),
             Value::Nil => write!(f, "nil"),
@@ -51,52 +73,35 @@ pub struct Interpreter {
     envs: Vec<HashMap<String, Value>>,
     returning: bool,
     ret_val: Value,
+    current_dir: PathBuf,
+    included: HashSet<PathBuf>,
 }
 
 impl Interpreter {
     pub fn new(ast: Ast) -> Self { 
-        let mut interp = Self { ast, envs: vec![HashMap::new()], returning: false, ret_val: Value::Nil };
-        // Register built-in native function __rustc_println
-        if let Some(global) = interp.envs.last_mut() {
-            global.insert("__rustc_println".to_string(), Value::NativeFunction(|args: Vec<Value>| {
-                if args.is_empty() {
-                    println!("");
-                } else {
-                    for (i, a) in args.iter().enumerate() {
-                        if i > 0 { print!(" "); }
-                        print!("{}", a);
-                    }
-                    println!("");
-                }
-                Value::Nil
-            }));
-            // Register built-in native function __rustc_readline
-            global.insert("__rustc_readline".to_string(), Value::NativeFunction(|args: Vec<Value>| {
-                // Optional prompt (printed without newline)
-                if !args.is_empty() {
-                    for (i, a) in args.iter().enumerate() {
-                        if i > 0 { print!(" "); }
-                        print!("{}", a);
-                    }
-                    use std::io::Write as _;
-                    let _ = std::io::stdout().flush();
-                }
-                let mut line = String::new();
-                let _ = std::io::stdin().read_line(&mut line);
-                // Trim trailing \r and \n
-                while line.ends_with('\n') || line.ends_with('\r') {
-                    line.pop();
-                }
-                Value::String(line)
-            }));
-        }
+        let mut interp = Self { 
+            ast, 
+            envs: vec![HashMap::new()], 
+            returning: false, 
+            ret_val: Value::Nil,
+            current_dir: env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            included: HashSet::new(),
+        };
+        interp.register_builtins();
         interp
+    }
+
+    pub fn set_current_dir<P: Into<PathBuf>>(&mut self, dir: P) {
+        self.current_dir = dir.into();
     }
 
     // Evaluate all top-level expressions, returning their values
     pub fn interpret(&mut self) -> Vec<Value> {
         // Move nodes out to avoid borrowing self while mutably using it in eval
         let nodes = std::mem::take(&mut self.ast.nodes);
+        // Ensure prelude is included once per top-level program
+        let prelude = Expr::Include("prelude.nova".to_string());
+        let _ = self.eval(&prelude);
         let mut results = Vec::new();
         for expr in &nodes {
             let v = self.eval(expr);
@@ -188,7 +193,7 @@ impl Interpreter {
                     TokenType::Plus => match (lv, rv) {
                         (Value::Number(a), Value::Number(b)) => Value::Number(a + b),
                         (Value::String(a), Value::String(b)) => Value::String(a + &b),
-                        (a, b) => panic!("Type error: cannot add {:?} and {:?}", a, b),
+                        (a, b) => panic!("Type error: cannot add {} and {}", a, b),
                     },
                     TokenType::Minus => Value::Number(self.as_number(lv) - self.as_number(rv)),
                     TokenType::Star => Value::Number(self.as_number(lv) * self.as_number(rv)),
@@ -206,12 +211,18 @@ impl Interpreter {
                     other => panic!("Unsupported binary operator: {:?}", other),
                 }
             }
-            Expr::FuncDef { name, params, body } => {
-                let func = Rc::new(Function { params: params.clone(), body: body.clone() });
+            Expr::FuncDef { name, params, vararg, body } => {
+                let func = Rc::new(Function { params: params.clone(), vararg: vararg.clone(), body: body.clone() });
                 self.set_var(name, Value::Function(func));
                 Value::Nil
             }
             Expr::Call { callee, args } => {
+                // If calling an identifier that is not defined, report "function" not "variable"
+                if let Expr::VarGet(name) = &**callee {
+                    if self.get_var(name).is_none() {
+                        panic!("Function not found '{}'.", name);
+                    }
+                }
                 let cal = self.eval(callee);
                 let mut argv = Vec::new();
                 for a in args {
@@ -219,9 +230,35 @@ impl Interpreter {
                 }
                 match cal {
                     Value::Function(f) => self.call_function(f, argv),
-                    Value::NativeFunction(f) => f(argv),
-                    other => panic!("Attempted to call non-function value: {:?}", other),
+                    Value::NativeFunction(f) => (f)(&argv).unwrap_or_else(|e| panic!("Native function error: {}", e)),
+                    other => panic!("Attempted to call non-function value: {}", other),
                 }
+            }
+            Expr::Include(path) => {
+                // Resolve include path relative to current_dir if not absolute
+                let mut target = PathBuf::from(path.clone());
+                if !target.is_absolute() {
+                    target = self.current_dir.join(&target);
+                }
+                let canon = fs::canonicalize(&target).unwrap_or_else(|_| target.clone());
+                if self.included.contains(&canon) {
+                    return Value::Nil;
+                }
+                // Read file
+                let contents = fs::read_to_string(&target)
+                    .unwrap_or_else(|e| panic!("Include error: cannot read '{}': {}", target.display(), e));
+                // Mark as included to prevent cycles
+                self.included.insert(canon.clone());
+                // Tokenize and parse
+                let tokens = tokenizer::scan(contents);
+                let ast = Parser::new(tokens).parse();
+                // Temporarily switch current_dir to included file's directory
+                let prev_dir = self.current_dir.clone();
+                let new_dir = canon.parent().unwrap_or(&prev_dir).to_path_buf();
+                self.current_dir = new_dir;
+                let _ = self.interpret_with(ast);
+                self.current_dir = prev_dir;
+                Value::Nil
             }
             Expr::Return(expr) => {
                 let v = self.eval(expr);
@@ -237,6 +274,7 @@ impl Interpreter {
             Value::Number(n) => n,
             Value::String(s) => s.parse::<f64>().unwrap_or_else(|_| panic!("Expected number, got string '{}'", s)),
             Value::Boolean(b) => if b { 1.0 } else { 0.0 },
+            Value::List(_) => panic!("Cannot convert list to number"),
             Value::Function(_) => panic!("Cannot convert function to number"),
             Value::NativeFunction(_) => panic!("Cannot convert native function to number"),
             Value::Nil => 0.0,
@@ -286,6 +324,15 @@ impl Interpreter {
         // Assign into the nearest existing scope; if not found, define in current scope
         for scope in self.envs.iter_mut().rev() {
             if scope.contains_key(name) {
+                // Prevent overwriting existing functions (user-defined or native)
+                if let Some(existing) = scope.get(name) {
+                    match existing {
+                        Value::Function(_) | Value::NativeFunction(_) => {
+                            panic!("Cannot overwrite function '{}'.", name);
+                        }
+                        _ => {}
+                    }
+                }
                 scope.insert(name.to_string(), value.clone());
                 return;
             }
@@ -296,15 +343,32 @@ impl Interpreter {
     }
 
     fn call_function(&mut self, func: Rc<Function>, args: Vec<Value>) -> Value {
-        if args.len() != func.params.len() {
-            panic!("Expected {} arguments, got {}", func.params.len(), args.len());
+        let fixed = func.params.len();
+        match &func.vararg {
+            None => {
+                if args.len() != fixed {
+                    panic!("Expected {} arguments, got {}", fixed, args.len());
+                }
+            }
+            Some(_) => {
+                if args.len() < fixed {
+                    panic!("Expected at least {} arguments, got {}", fixed, args.len());
+                }
+            }
         }
         // New call scope
         self.push_scope();
-        // Bind parameters
+        // Bind fixed parameters
         for (i, pname) in func.params.iter().enumerate() {
             if let Some(current) = self.envs.last_mut() {
                 current.insert(pname.clone(), args[i].clone());
+            }
+        }
+        // Bind vararg as list if present
+        if let Some(varname) = &func.vararg {
+            let rest = if args.len() > fixed { args[fixed..].to_vec() } else { Vec::new() };
+            if let Some(current) = self.envs.last_mut() {
+                current.insert(varname.clone(), Value::List(rest));
             }
         }
         // Execute body
@@ -321,5 +385,100 @@ impl Interpreter {
         // Pop call scope
         self.pop_scope();
         ret
+    }
+}
+
+
+impl Interpreter {
+    fn add_native<F>(&mut self, name: &str, min_args: usize, max_args: Option<usize>, f: F)
+    where
+        F: Fn(&[Value]) -> Result<Value, RuntimeError> + 'static,
+    {
+        let name_owned = name.to_string();
+        let name_for_key = name_owned.clone();
+        let func: Rc<NativeFn> = Rc::new(move |args: &[Value]| -> Result<Value, RuntimeError> {
+            if args.len() < min_args {
+                return Err(RuntimeError::new(format!(
+                    "{} expects at least {} args, got {}",
+                    name_owned, min_args, args.len()
+                )));
+            }
+            if let Some(max) = max_args {
+                if args.len() > max {
+                    return Err(RuntimeError::new(format!(
+                        "{} expects at most {} args, got {}",
+                        name_owned, max, args.len()
+                    )));
+                }
+            }
+            f(args)
+        });
+        if let Some(global) = self.envs.last_mut() {
+            global.insert(name_for_key, Value::NativeFunction(func));
+        }
+    }
+
+    fn register_builtins(&mut self) {
+        // __rustc_println: prints all args space-separated and newline
+        self.add_native("__rustc_println", 0, None, |args: &[Value]| {
+            // Expand a single list argument
+            let mut iter: Vec<&Value> = Vec::new();
+            if args.len() == 1 {
+                if let Value::List(items) = &args[0] {
+                    for it in items { iter.push(it); }
+                } else {
+                    iter.push(&args[0]);
+                }
+            } else {
+                for a in args { iter.push(a); }
+            }
+            if iter.is_empty() {
+                println!("");
+            } else {
+                for (i, a) in iter.iter().enumerate() {
+                    if i > 0 { print!(" "); }
+                    print!("{}", a);
+                }
+                println!("");
+            }
+            Ok(Value::Nil)
+        });
+
+        self.add_native("int", 1, Some(1), |args: &[Value]| {
+
+            for a in args {
+                if let Value::Number(n) = a {
+                    return Ok(Value::Number(n.floor()));
+                }
+            }
+            Err(RuntimeError::new("int expects a number".to_string()))
+        });
+
+        // __rustc_readline: optional prompt (args joined by space), returns String or Nil on EOF
+        self.add_native("__rustc_readline", 0, None, |args: &[Value]| {
+            if !args.is_empty() {
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 { print!(" "); }
+                    print!("{}", a);
+                }
+                use std::io::Write as _;
+                let _ = std::io::stdout().flush();
+            }
+            use std::io;
+            let mut line = String::new();
+            let stdin = io::stdin();
+            match stdin.read_line(&mut line) {
+                Ok(n) => {
+                    if n == 0 { return Ok(Value::Nil); }
+                }
+                Err(e) => {
+                    return Err(RuntimeError::new(format!("readline failed: {}", e)));
+                }
+            }
+            while line.ends_with('\n') || line.ends_with('\r') {
+                line.pop();
+            }
+            Ok(Value::String(line))
+        });
     }
 }

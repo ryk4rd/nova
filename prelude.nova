@@ -1,0 +1,10 @@
+// Define a global print function using the builtin __rustc_println (variadic)
+fn print(...args) {
+    __rustc_println(args)
+}
+
+// Define a global input function using the builtin __rustc_readline
+fn input(x) {
+    return __rustc_readline(x)
+}
+

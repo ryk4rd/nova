@@ -13,8 +13,9 @@ pub enum Expr {
     Block(Box<Vec<Expr>>),
     While { cond: Box<Expr>, body: Box<Expr> },
     Call { callee: Box<Expr>, args: Vec<Expr> },
-    FuncDef { name: String, params: Vec<String>, body: Rc<Expr> },
+    FuncDef { name: String, params: Vec<String>, vararg: Option<String>, body: Rc<Expr> },
     Return(Box<Expr>),
+    Include(String),
 }
 
 
@@ -101,8 +102,14 @@ impl Parser {
         let name = self.previous().value().unwrap_or("").to_string();
         self.consume(TokenType::LeftParen, "(");
         let mut params: Vec<String> = Vec::new();
+        let mut vararg: Option<String> = None;
         if !self.check(TokenType::RightParen) {
             loop {
+                if self.match_token(&[TokenType::Ellipsis]) {
+                    self.consume(TokenType::Identifier, "variadic parameter name after ...");
+                    vararg = Some(self.previous().value().unwrap_or("").to_string());
+                    break;
+                }
                 self.consume(TokenType::Identifier, "parameter name");
                 params.push(self.previous().value().unwrap_or("").to_string());
                 if !self.match_token(&[TokenType::Comma]) { break; }
@@ -112,7 +119,7 @@ impl Parser {
         // Expect a block body
         self.consume(TokenType::LeftCurly, "{");
         let body = self.block_body();
-        Expr::FuncDef { name, params, body: Rc::new(body) }
+        Expr::FuncDef { name, params, vararg, body: Rc::new(body) }
     }
 
     fn block_body(&mut self) -> Expr {
@@ -252,6 +259,12 @@ impl Parser {
             let expr = self.expression();
             self.consume(TokenType::RightParen, ")");
             return Expr::Grouping(Box::new(expr));
+        }
+        if self.match_token(&[TokenType::Include]) {
+            // include "path/to/file.nova"
+            self.consume(TokenType::String, "string path after include");
+            let path = self.previous().value().unwrap_or("").to_string();
+            return Expr::Include(path);
         }
 
         if self.match_token(&[TokenType::LeftCurly]) {

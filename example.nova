@@ -1,44 +1,11 @@
-//Pretty cool stuff
-name = "marcus"
-name = name + " andersson"
+name = input("What is your name? ")
 
+print("Hello " + name + "!")
 
-// Define a global print function using the builtin __rustc_println
-fn print(x) {
-    __rustc_println(x)
-}
-
-// Define a global input function using the builtin __rustc_readline
-fn input(x) {
-    return __rustc_readline(x)
-}
-
-fn add(a, b) {
-    return a + b
-}
-
-
-print name
-
-print(add(1, 2))
+num = int(input("How many iterations? "))
 
 i = 0
-
-while i < 1{
-    print("hejsan")
-    i = i + 1
+while i < num {
+    print("Iteration " + i)
 }
-
-name = input("Enter your name:")
-print("Hello, " + name)
-
-if 1 == 1 {
-    hello = "hejjjjj"
-    print(hello)
-    age = 25
-    print(age)
-} else {
-    age = 26
-}
-
 

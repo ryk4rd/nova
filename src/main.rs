@@ -1,7 +1,8 @@
 use std::{
     env,
     io::{self, Write},
-    fs
+    fs,
+    path::Path
 };
 use crate::parser::{Parser, Ast};
 use crate::interpreter::{Interpreter, Value};
@@ -23,6 +24,9 @@ fn main() {
     let ast = Parser::new(tokens).parse();
     // dbg!(ast);
     let mut interp = Interpreter::new(ast);
+    if let Some(dir) = Path::new(&args[1]).parent() {
+        interp.set_current_dir(dir.to_path_buf());
+    }
     let _values = interp.interpret();
 }
 

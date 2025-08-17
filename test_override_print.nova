@@ -1,0 +1,2 @@
+// Attempt to override prelude-defined print
+fn print(x) { __rustc_println("bad") }

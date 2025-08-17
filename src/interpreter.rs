@@ -445,13 +445,30 @@ impl Interpreter {
         });
 
         self.add_native("int", 1, Some(1), |args: &[Value]| {
-
-            for a in args {
-                if let Value::Number(n) = a {
-                    return Ok(Value::Number(n.floor()));
+            let v = &args[0];
+            match v {
+                Value::Number(n) => Ok(Value::Number(n.trunc())),
+                Value::String(s) => {
+                    let t = s.trim();
+                    if let Ok(i) = t.parse::<i64>() {
+                        Ok(Value::Number(i as f64))
+                    } else if let Ok(f) = t.parse::<f64>() {
+                        Ok(Value::Number(f.trunc()))
+                    } else {
+                        Err(RuntimeError::new(format!("int: cannot convert string '{}' to int", s)))
+                    }
                 }
+                Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+                Value::Nil => Ok(Value::Number(0.0)),
+                Value::List(_) => Err(RuntimeError::new("int: cannot convert list to int")),
+                Value::Function(_) => Err(RuntimeError::new("int: cannot convert function to int")),
+                Value::NativeFunction(_) => Err(RuntimeError::new("int: cannot convert native function to int")),
             }
-            Err(RuntimeError::new("int expects a number".to_string()))
+        });
+
+        self.add_native("str", 1, Some(1), |args: &[Value]| {
+            let s = format!("{}", args[0]);
+            Ok(Value::String(s))
         });
 
         // __rustc_readline: optional prompt (args joined by space), returns String or Nil on EOF

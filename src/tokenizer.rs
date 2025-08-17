@@ -260,8 +260,8 @@ fn check_reserved_words(word: &str) -> Option<TokenType> {
         "var" => Some(TokenType::Var),
         "return" => Some(TokenType::Return),
         "include" => Some(TokenType::Include),
-        "str" => Some(TokenType::StrType),
-        "int" => Some(TokenType::IntType),
+       // "str" => Some(TokenType::StrType),
+        //"int" => Some(TokenType::IntType),
         _ => None,
     }
 }

@@ -2,10 +2,11 @@ name = input("What is your name? ")
 
 print("Hello " + name + "!")
 
-num = int(input("How many iterations? "))
+num = input("How many iterations? ")
 
 i = 0
-while i < num {
-    print("Iteration " + i)
+while i < int(num) {
+    print("Iteration " + str(i) + "!")
+    i = i + 1
 }
 

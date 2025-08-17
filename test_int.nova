@@ -1,0 +1,11 @@
+// Validate int conversions
+print(int("42"))           // 42
+print(int(" 003.9 "))      // 3
+print(int(3.7))             // 3
+print(int(-3.7))            // -3
+print(int(1 == 1))          // 1
+print(int(1 == 2))          // 0
+
+fn noop() {}
+x = noop()
+print(int(x))               // 0

@@ -1,0 +1,17 @@
+// Validate str conversions
+print(str(42))                // 42
+print(str(3.14))              // 3.14
+print(str("abc"))            // abc
+print(str(1 == 0))            // false
+
+fn noop() {}
+nilv = noop()
+print(str(nilv))              // nil
+
+fn make_list(...xs) { return xs }
+ls = make_list(1, "a", 3)
+print(str(ls))                // [1, a, 3]
+
+// Function and native function representations
+print(str(print))             // <fn>
+print(str(__rustc_println))   // <native-fn>

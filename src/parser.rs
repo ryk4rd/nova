@@ -4,18 +4,20 @@ use std::rc::Rc;
 #[derive(Debug)]
 pub enum Expr {
     Literal(Literal),
-    VarGet(String),
-    Grouping(Box<Expr>),
-    Unary { op: TokenType, right: Box<Expr> },
-    Binary { left: Box<Expr>, op: TokenType, right: Box<Expr> },
-    Assign { name: String, value: Box<Expr> },
+    VarGet(String, (u32, u32)),
+    Grouping(Box<Expr>, (u32, u32)),
+    Unary { op: TokenType, right: Box<Expr>, pos: (u32, u32) },
+    Binary { left: Box<Expr>, op: TokenType, right: Box<Expr>, pos: (u32, u32) },
+    Assign { name: String, value: Box<Expr>, pos: (u32, u32) },
     If { cond: Box<Expr>, then: Box<Expr>, else_: Option<Box<Expr>> },
     Block(Box<Vec<Expr>>),
     While { cond: Box<Expr>, body: Box<Expr> },
-    Call { callee: Box<Expr>, args: Vec<Expr> },
-    FuncDef { name: String, params: Vec<String>, vararg: Option<String>, body: Rc<Expr> },
-    Return(Box<Expr>),
-    Include(String),
+    Call { callee: Box<Expr>, args: Vec<Expr>, pos: (u32, u32) },
+    FuncDef { name: String, params: Vec<String>, vararg: Option<String>, body: Rc<Expr>, pos: (u32, u32) },
+    Return(Box<Expr>, (u32, u32)),
+    Include(String, (u32, u32)),
+    Array(Vec<Expr>, (u32, u32)),
+    ArrayIndex(Box<Expr>, Box<Expr>, (u32, u32)),
 }
 
 
@@ -38,6 +40,11 @@ pub struct Parser {
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, current: 0 }
+    }
+
+    fn parse_error_at(&self, pos: (u32, u32), msg: &str) -> ! {
+        eprintln!("Parse error at line {}, col {}: {}", pos.1, pos.0, msg);
+        std::process::exit(1)
     }
 
     pub fn parse(mut self) -> Ast {
@@ -92,13 +99,15 @@ impl Parser {
 
 
     fn return_statement(&mut self) -> Expr {
+        let pos = self.previous().pos();
         let value = self.expression();
-        Expr::Return(Box::new(value))
+        Expr::Return(Box::new(value), pos)
     }
 
     fn fn_declaration(&mut self) -> Expr {
         // fn <identifier> (params) { body }
         self.consume(TokenType::Identifier, "function name");
+        let name_pos = self.previous().pos();
         let name = self.previous().value().unwrap_or("").to_string();
         self.consume(TokenType::LeftParen, "(");
         let mut params: Vec<String> = Vec::new();
@@ -119,7 +128,7 @@ impl Parser {
         // Expect a block body
         self.consume(TokenType::LeftCurly, "{");
         let body = self.block_body();
-        Expr::FuncDef { name, params, vararg, body: Rc::new(body) }
+        Expr::FuncDef { name, params, vararg, body: Rc::new(body), pos: name_pos }
     }
 
     fn block_body(&mut self) -> Expr {
@@ -146,10 +155,10 @@ impl Parser {
         if self.match_token(&[TokenType::Equal]) {
             let equals = self.previous();
             let value = self.assignment();
-            if let Expr::VarGet(name) = expr {
-                return Expr::Assign {name, value: Box::new(value) };
+            if let Expr::VarGet(name, _) = expr {
+                return Expr::Assign { name, value: Box::new(value), pos: equals.pos() };
             }
-            panic!("Invalid assignment target: {}", equals.value().unwrap_or(""));
+            self.parse_error_at(equals.pos(), &format!("Invalid assignment target: {}", equals.value().unwrap_or("")) );
         }
         expr
     }
@@ -175,9 +184,10 @@ impl Parser {
     fn equality(&mut self) -> Expr {
         let mut expr = self.comparison();
         while self.match_token(&[TokenType::EqualEqual, TokenType::BangEqual]) {
-            let op = self.previous().token_type();
+            let op_tok = self.previous();
+            let op = op_tok.token_type();
             let right = self.comparison();
-            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };
+            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right), pos: op_tok.pos() };
         }
         expr
     }
@@ -186,9 +196,10 @@ impl Parser {
         let mut expr = self.addition();
         while self.match_token(&[TokenType::Greater, TokenType::GreaterEqual,
             TokenType::Less, TokenType::LessEqual]) {
-            let op = self.previous().token_type();
+            let op_tok = self.previous();
+            let op = op_tok.token_type();
             let right = self.addition();
-            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };
+            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right), pos: op_tok.pos() };
         }
         expr
     }
@@ -197,9 +208,10 @@ impl Parser {
     fn addition(&mut self) -> Expr {
         let mut expr = self.term();
         while self.match_token(&[TokenType::Plus, TokenType::Minus]) {
-            let op = self.previous().token_type();
+            let op_tok = self.previous();
+            let op = op_tok.token_type();
             let right = self.term();
-            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };
+            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right), pos: op_tok.pos() };
         }
         expr
     }
@@ -208,9 +220,10 @@ impl Parser {
     fn term(&mut self) -> Expr {
         let mut expr = self.unary();
         while self.match_token(&[TokenType::Star, TokenType::Slash]) {
-            let op = self.previous().token_type();
+            let op_tok = self.previous();
+            let op = op_tok.token_type();
             let right = self.unary();
-            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right) };
+            expr = Expr::Binary { left: Box::new(expr), op, right: Box::new(right), pos: op_tok.pos() };
         }
         expr
     }
@@ -218,14 +231,18 @@ impl Parser {
     // ! | -
     fn unary(&mut self) -> Expr {
         if self.match_token(&[TokenType::Bang, TokenType::Minus]) {
-            let op = self.previous().token_type();
+            let op_tok = self.previous();
+            let op = op_tok.token_type();
+            let pos = op_tok.pos();
             let right = self.unary();
-            return Expr::Unary { op, right: Box::new(right) };
+            return Expr::Unary { op, right: Box::new(right), pos };
         }
         let mut expr = self.primary();
         // Postfix call parsing: allow chaining like foo()(1,2)
         loop {
             if self.match_token(&[TokenType::LeftParen]) {
+                let lp = self.previous();
+                let call_pos = lp.pos();
                 let mut args = Vec::new();
                 if !self.check(TokenType::RightParen) {
                     loop {
@@ -234,7 +251,7 @@ impl Parser {
                     }
                 }
                 self.consume(TokenType::RightParen, ")");
-                expr = Expr::Call { callee: Box::new(expr), args };
+                expr = Expr::Call { callee: Box::new(expr), args, pos: call_pos };
                 continue;
             }
             break;
@@ -252,29 +269,55 @@ impl Parser {
             return Expr::Literal(Literal::String(lex));
         }
         if self.match_token(&[TokenType::Identifier]) {
-            let name = self.previous().value().unwrap_or("").to_string();
-            return Expr::VarGet(name);
+            let tok = self.previous();
+            if self.peek().token_type() == TokenType::LeftBracket {
+                // Array indexing: foo[1]
+                let lb = self.previous();
+                self.consume(TokenType::LeftBracket, "[");
+                let index = self.expression();
+                self.consume(TokenType::RightBracket, "]");
+                return Expr::ArrayIndex(Box::new(Expr::VarGet(tok.value().unwrap_or("").to_string(), tok.pos())), Box::new(index), lb.pos());
+            } else {
+                let name = tok.value().unwrap_or("").to_string();
+                return Expr::VarGet(name, tok.pos());
+            }
         }
         if self.match_token(&[TokenType::LeftParen]) {
+            let lp = self.previous();
             let expr = self.expression();
             self.consume(TokenType::RightParen, ")");
-            return Expr::Grouping(Box::new(expr));
+            return Expr::Grouping(Box::new(expr), lp.pos());
+        }
+
+        if self.match_token(&[TokenType::LeftBracket]) {
+            let lb = self.previous();
+            if self.peek().token_type() == TokenType::RightBracket {
+                return Expr::Array(vec![], lb.pos());
+            } else {
+                let mut items = vec![];
+                loop {
+                    items.push(self.expression());
+                    if !self.match_token(&[TokenType::Comma]) { break; }
+                }
+                self.consume(TokenType::RightBracket, "]");
+                return Expr::Array(items, lb.pos());
+            }
         }
         if self.match_token(&[TokenType::Include]) {
             // include "path/to/file.nova"
+            let inc_tok = self.previous();
+            let inc_pos = inc_tok.pos();
             self.consume(TokenType::String, "string path after include");
             let path = self.previous().value().unwrap_or("").to_string();
-            return Expr::Include(path);
+            return Expr::Include(path, inc_pos);
         }
 
         if self.match_token(&[TokenType::LeftCurly]) {
             return self.block_body();
         }
-        // Fallback: if nothing matches, return a dummy literal from current token value
-        // or panic for now because grammar expects a primary
-
-        dbg!(self.peek());
-        panic!("Expected expression at token index {}", self.current);
+        // Fallback: if nothing matches, report a parse error with current token position
+        let pos = if !self.is_at_end() { self.peek().pos() } else { (0,0) };
+        self.parse_error_at(pos, &format!("Expected expression at token index {}", self.current));
     }
 
     // utilities
@@ -290,7 +333,8 @@ impl Parser {
 
     fn consume(&mut self, t: TokenType, _context: &str) {
         if self.check(t) { self.advance(); return; }
-        panic!("Expected token {:?} before {} at index {}", t, _context, self.current);
+        let pos = if !self.is_at_end() { self.peek().pos() } else { (0,0) };
+        self.parse_error_at(pos, &format!("Expected token {:?} before {}", t, _context));
     }
 
     fn check(&self, t: TokenType) -> bool {

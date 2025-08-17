@@ -91,6 +91,11 @@ impl Interpreter {
         interp
     }
 
+    fn fatal_at(&self, pos: (u32, u32), msg: &str) -> ! {
+        eprintln!("Runtime error at line {}, col {}: {}", pos.1, pos.0, msg);
+        std::process::exit(1)
+    }
+
     pub fn set_current_dir<P: Into<PathBuf>>(&mut self, dir: P) {
         self.current_dir = dir.into();
     }
@@ -100,7 +105,7 @@ impl Interpreter {
         // Move nodes out to avoid borrowing self while mutably using it in eval
         let nodes = std::mem::take(&mut self.ast.nodes);
         // Ensure prelude is included once per top-level program
-        let prelude = Expr::Include("prelude.nova".to_string());
+        let prelude = Expr::Include("prelude.nova".to_string(), (0,0));
         let _ = self.eval(&prelude);
         let mut results = Vec::new();
         for expr in &nodes {
@@ -140,6 +145,30 @@ impl Interpreter {
                 }
                 Value::Nil
             }
+            Expr::ArrayIndex(arr, index, _) => {
+                let arr = self.eval(arr);
+                let index = self.eval(index);
+                match (arr, index) {
+                    (Value::List(items), Value::Number(n)) => {
+                        let mut item = items[n as usize].clone();
+                        if n == -1.0 {
+                            item = items.last().unwrap_or(&Value::Nil).clone();
+                        } else if n < -1.0 || n as usize >= items.len() {
+                            panic!("Array index out of bounds: {}", n);
+                        }
+                        item
+                    }
+                    (Value::List(_), _) => panic!("Cannot index non-list value"),
+                    _ => panic!("Cannot index non-list value"),
+                }
+            }
+            Expr::Array(items, _) => {
+                let mut arr = Vec::new();
+                for item in items {
+                    arr.push(self.eval(item));
+                }
+                Value::List(arr)
+            }
             Expr::If { cond, then, else_ } => {
                 let cond = self.eval(cond);
                 if self.is_truthy(&cond) {
@@ -165,28 +194,28 @@ impl Interpreter {
                 Value::Nil
             }
 
-            Expr::VarGet(name) => {
+            Expr::VarGet(name, pos) => {
                 match self.get_var(name) {
                     Some(v) => v,
-                    None => panic!("Undefined variable '{}'.", name),
+                    None => self.fatal_at(*pos, &format!("Undefined variable '{}'", name)),
                 }
             }
 
-            Expr::Grouping(inner) => self.eval(inner),
-            Expr::Unary { op, right } => {
+            Expr::Grouping(inner, _) => self.eval(inner),
+            Expr::Unary { op, right, pos } => {
                 let rv = self.eval(right);
                 match op {
                     TokenType::Minus => Value::Number(-self.as_number(rv)),
                     TokenType::Bang => Value::Boolean(!self.is_truthy(&rv)),
-                    _ => panic!("Unsupported unary operator: {:?}", op),
+                    _ => self.fatal_at(*pos, &format!("Unsupported unary operator: {:?}", op)),
                 }
             }
-            Expr::Assign { name, value } => {
+            Expr::Assign { name, value, pos: _ } => {
                 let v = self.eval(value);
                 self.set_var(name, v);
                 Value::Nil
             }
-            Expr::Binary { left, op, right } => {
+            Expr::Binary { left, op, right, pos: _ } => {
                 let lv = self.eval(left);
                 let rv = self.eval(right);
                 match op {
@@ -211,14 +240,14 @@ impl Interpreter {
                     other => panic!("Unsupported binary operator: {:?}", other),
                 }
             }
-            Expr::FuncDef { name, params, vararg, body } => {
+            Expr::FuncDef { name, params, vararg, body, .. } => {
                 let func = Rc::new(Function { params: params.clone(), vararg: vararg.clone(), body: body.clone() });
                 self.set_var(name, Value::Function(func));
                 Value::Nil
             }
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 // If calling an identifier that is not defined, report "function" not "variable"
-                if let Expr::VarGet(name) = &**callee {
+                if let Expr::VarGet(name, _) = &**callee {
                     if self.get_var(name).is_none() {
                         panic!("Function not found '{}'.", name);
                     }
@@ -234,7 +263,7 @@ impl Interpreter {
                     other => panic!("Attempted to call non-function value: {}", other),
                 }
             }
-            Expr::Include(path) => {
+            Expr::Include(path, _) => {
                 // Resolve include path relative to current_dir if not absolute
                 let mut target = PathBuf::from(path.clone());
                 if !target.is_absolute() {
@@ -260,7 +289,7 @@ impl Interpreter {
                 self.current_dir = prev_dir;
                 Value::Nil
             }
-            Expr::Return(expr) => {
+            Expr::Return(expr, _) => {
                 let v = self.eval(expr);
                 self.returning = true;
                 self.ret_val = v;

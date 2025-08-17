@@ -1,12 +1,10 @@
-name = input("What is your name? ")
+a = [1, "foo", 2, 3]
+//b = []
 
-print("Hello " + name + "!")
+// len = a.len()
+// a.push("foo")
+// a[0] = "bar"
 
-num = input("How many iterations? ")
 
-i = 0
-while i < int(num) {
-    print("Iteration " + str(i) + "!")
-    i = i + 1
-}
+print(a[-1])
 

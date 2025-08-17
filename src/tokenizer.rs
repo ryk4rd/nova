@@ -32,6 +32,9 @@ impl Token {
     pub fn value(&self) -> Option<&str> {
         self.value.as_deref()
     }
+    pub fn pos(&self) -> (u32, u32) {
+        self.pos
+    }
 }
 
 

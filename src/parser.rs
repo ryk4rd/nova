@@ -9,9 +9,11 @@ pub enum Expr {
     Binary { left: Box<Expr>, op: TokenType, right: Box<Expr> },
     Print(Box<Expr>),
     Assign { name: String, value: Box<Expr> },
-    If { cond: Box<Expr>, then: Box<Expr>, else_: Box<Option<Expr>> },
+    If { cond: Box<Expr>, then: Box<Expr>, else_: Option<Box<Expr>> },
     Block(Box<Vec<Expr>>),
+    While { cond: Box<Expr>, body: Box<Expr> },
 }
+
 
 #[derive(Debug)]
 pub enum Literal {
@@ -68,8 +70,19 @@ impl Parser {
             return self.if_statement();
         }
 
+        if self.match_token(&[TokenType::While]) {
+            return self.while_statement();
+        }
+
         self.expr_stmt()
     }
+
+    fn while_statement(&mut self) -> Expr {
+        let cond = self.expression();
+        let body = self.statement();
+        Expr::While { cond: Box::new(cond), body: Box::new(body) }
+    }
+
     fn print_statement(&mut self) -> Expr {
         let expr = self.expression();
         Expr::Print(Box::new(expr))
@@ -99,11 +112,20 @@ impl Parser {
         expr
     }
 
+
     fn if_statement(&mut self) -> Expr {
         let cond = self.expression();
         let then = self.statement();
+
+        let else_ = if self.match_token(&[TokenType::Else]) {
+            Some(Box::new(self.statement()))
+        } else {
+            None
+        };
+
+        //add else statemen
         //let else_ = self.statement();
-        Expr::If { cond: Box::new(cond), then: Box::new(then), else_: Box::new(None) }
+        Expr::If { cond: Box::new(cond), then: Box::new(then), else_: else_ }
     }
 
 

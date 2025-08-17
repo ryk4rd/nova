@@ -23,11 +23,12 @@ impl std::fmt::Display for Value {
 
 pub struct Interpreter {
     ast: Ast,
-    env: HashMap<String, Value>, // global environment
+    // Environments stack: envs[0] is global, last is current scope
+    envs: Vec<HashMap<String, Value>>,
 }
 
 impl Interpreter {
-    pub fn new(ast: Ast) -> Self { Self { ast, env: HashMap::new() } }
+    pub fn new(ast: Ast) -> Self { Self { ast, envs: vec![HashMap::new()] } }
 
     // Evaluate all top-level expressions, returning their values
     pub fn interpret(&mut self) -> Vec<Value> {
@@ -63,25 +64,41 @@ impl Interpreter {
                 }
                 Literal::String(s) => Value::String(s.clone()),
             },
+            Expr::While { cond, body } => {
+                let mut cond_val = self.eval(cond);
+                while self.is_truthy(&cond_val) {
+                    self.eval(body);
+                    cond_val = self.eval(cond);
+                }
+                Value::Nil
+            }
             Expr::If { cond, then, else_ } => {
                 let cond = self.eval(cond);
-                if cond == Value::Boolean(true) {
+                if self.is_truthy(&cond) {
                     self.eval(then)
                 } else {
-                    Value::Nil
+                    if let Some(else_) = else_ {
+                        self.eval(else_)
+                    } else {
+                        Value::Nil
+                    }
                 }
             }
 
             Expr::Block(inner) => {
+                // Enter new scope
+                self.push_scope();
                 for expr in inner.iter() {
                     self.eval(expr);
                 }
+                // Exit scope
+                self.pop_scope();
                 Value::Nil
             }
 
             Expr::VarGet(name) => {
-                match self.env.get(name) {
-                    Some(v) => v.clone(),
+                match self.get_var(name) {
+                    Some(v) => v,
                     None => panic!("Undefined variable '{}'.", name),
                 }
             }
@@ -97,7 +114,7 @@ impl Interpreter {
             }
             Expr::Assign { name, value } => {
                 let v = self.eval(value);
-                self.env.insert(name.clone(), v.clone());
+                self.set_var(name, v);
                 Value::Nil
             }
             Expr::Print(expr) => {
@@ -157,6 +174,40 @@ impl Interpreter {
             (Value::Boolean(x), Value::Boolean(y)) => x == y,
             (Value::Nil, Value::Nil) => true,
             _ => false,
+        }
+    }
+
+    // Scope management helpers
+    fn push_scope(&mut self) {
+        self.envs.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        // Never pop the last (global) scope
+        if self.envs.len() > 1 {
+            self.envs.pop();
+        }
+    }
+
+    fn get_var(&self, name: &str) -> Option<Value> {
+        for scope in self.envs.iter().rev() {
+            if let Some(v) = scope.get(name) {
+                return Some(v.clone());
+            }
+        }
+        None
+    }
+
+    fn set_var(&mut self, name: &str, value: Value) {
+        // Assign into the nearest existing scope; if not found, define in current scope
+        for scope in self.envs.iter_mut().rev() {
+            if scope.contains_key(name) {
+                scope.insert(name.to_string(), value.clone());
+                return;
+            }
+        }
+        if let Some(current) = self.envs.last_mut() {
+            current.insert(name.to_string(), value);
         }
     }
 }

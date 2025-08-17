@@ -6,7 +6,7 @@ pub enum TokenType {
     Plus, Minus, Star, Slash, Bang, Equal, LeftParen, RightParen, LeftBracket, RightBracket,
 
     EqualEqual, BangEqual, Semicolon, Comma, Colon, Dot, Less, LessEqual, Greater, GreaterEqual,
-    Identifier, Number, String, Fn, If, Else, While, For, LeftCurly, RightCurly, Print, Var
+    Identifier, Number, String, Fn, If, Else, While, For, LeftCurly, RightCurly, Var, Return
 }
 
 #[derive(Debug, Clone)]
@@ -241,8 +241,8 @@ fn check_reserved_words(word: &str) -> Option<TokenType> {
         "else" => Some(TokenType::Else),
         "while" => Some(TokenType::While),
         "for" => Some(TokenType::For),
-        "print" => Some(TokenType::Print),
         "var" => Some(TokenType::Var),
+        "return" => Some(TokenType::Return),
         _ => None,
     }
 }

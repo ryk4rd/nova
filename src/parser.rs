@@ -1,4 +1,5 @@
 use crate::tokenizer::{Token, TokenType};
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub enum Expr {
@@ -7,11 +8,13 @@ pub enum Expr {
     Grouping(Box<Expr>),
     Unary { op: TokenType, right: Box<Expr> },
     Binary { left: Box<Expr>, op: TokenType, right: Box<Expr> },
-    Print(Box<Expr>),
     Assign { name: String, value: Box<Expr> },
     If { cond: Box<Expr>, then: Box<Expr>, else_: Option<Box<Expr>> },
     Block(Box<Vec<Expr>>),
     While { cond: Box<Expr>, body: Box<Expr> },
+    Call { callee: Box<Expr>, args: Vec<Expr> },
+    FuncDef { name: String, params: Vec<String>, body: Rc<Expr> },
+    Return(Box<Expr>),
 }
 
 
@@ -57,21 +60,24 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Expr {
+        if self.match_token(&[TokenType::Fn]) {
+            return self.fn_declaration();
+        }
         self.statement()
     }
 
 
     fn statement(&mut self) -> Expr {
-        if self.match_token(&[TokenType::Print]) {
-            return self.print_statement();
-        }
-
         if self.match_token(&[TokenType::If]) {
             return self.if_statement();
         }
 
         if self.match_token(&[TokenType::While]) {
             return self.while_statement();
+        }
+
+        if self.match_token(&[TokenType::Return]) {
+            return self.return_statement();
         }
 
         self.expr_stmt()
@@ -83,11 +89,40 @@ impl Parser {
         Expr::While { cond: Box::new(cond), body: Box::new(body) }
     }
 
-    fn print_statement(&mut self) -> Expr {
-        let expr = self.expression();
-        Expr::Print(Box::new(expr))
+
+    fn return_statement(&mut self) -> Expr {
+        let value = self.expression();
+        Expr::Return(Box::new(value))
     }
 
+    fn fn_declaration(&mut self) -> Expr {
+        // fn <identifier> (params) { body }
+        self.consume(TokenType::Identifier, "function name");
+        let name = self.previous().value().unwrap_or("").to_string();
+        self.consume(TokenType::LeftParen, "(");
+        let mut params: Vec<String> = Vec::new();
+        if !self.check(TokenType::RightParen) {
+            loop {
+                self.consume(TokenType::Identifier, "parameter name");
+                params.push(self.previous().value().unwrap_or("").to_string());
+                if !self.match_token(&[TokenType::Comma]) { break; }
+            }
+        }
+        self.consume(TokenType::RightParen, ")");
+        // Expect a block body
+        self.consume(TokenType::LeftCurly, "{");
+        let body = self.block_body();
+        Expr::FuncDef { name, params, body: Rc::new(body) }
+    }
+
+    fn block_body(&mut self) -> Expr {
+        let mut exprs = vec![];
+        while !self.check(TokenType::RightCurly) {
+            exprs.push(self.declaration());
+        }
+        self.consume(TokenType::RightCurly, "}");
+        Expr::Block(Box::new(exprs))
+    }
 
     fn expr_stmt(&mut self) -> Expr {
         self.expression()
@@ -180,7 +215,24 @@ impl Parser {
             let right = self.unary();
             return Expr::Unary { op, right: Box::new(right) };
         }
-        self.primary()
+        let mut expr = self.primary();
+        // Postfix call parsing: allow chaining like foo()(1,2)
+        loop {
+            if self.match_token(&[TokenType::LeftParen]) {
+                let mut args = Vec::new();
+                if !self.check(TokenType::RightParen) {
+                    loop {
+                        args.push(self.expression());
+                        if !self.match_token(&[TokenType::Comma]) { break; }
+                    }
+                }
+                self.consume(TokenType::RightParen, ")");
+                expr = Expr::Call { callee: Box::new(expr), args };
+                continue;
+            }
+            break;
+        }
+        expr
     }
 
     fn primary(&mut self) -> Expr {
@@ -203,14 +255,7 @@ impl Parser {
         }
 
         if self.match_token(&[TokenType::LeftCurly]) {
-        
-            let mut exprs = vec![];
-
-            while !self.check(TokenType::RightCurly) {
-                exprs.push(self.declaration());
-            }
-            self.consume(TokenType::RightCurly, "}");
-            return Expr::Block(Box::new(exprs));
+            return self.block_body();
         }
         // Fallback: if nothing matches, return a dummy literal from current token value
         // or panic for now because grammar expects a primary

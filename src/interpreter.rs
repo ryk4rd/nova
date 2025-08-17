@@ -1,13 +1,35 @@
 use crate::parser::{Ast, Expr, Literal};
 use crate::tokenizer::TokenType;
 use std::collections::HashMap;
+use std::rc::Rc;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
+    Function(Rc<Function>),
+    NativeFunction(fn(Vec<Value>) -> Value),
     Nil,
+}
+
+#[derive(Debug)]
+pub struct Function {
+    pub params: Vec<String>,
+    pub body: Rc<Expr>,
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::Nil, Value::Nil) => true,
+            (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for Value {
@@ -16,6 +38,8 @@ impl std::fmt::Display for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
             Value::Boolean(b) => write!(f, "{}", b),
+            Value::Function(_) => write!(f, "<fn>"),
+            Value::NativeFunction(_) => write!(f, "<native-fn>"),
             Value::Nil => write!(f, "nil"),
         }
     }
@@ -25,10 +49,49 @@ pub struct Interpreter {
     ast: Ast,
     // Environments stack: envs[0] is global, last is current scope
     envs: Vec<HashMap<String, Value>>,
+    returning: bool,
+    ret_val: Value,
 }
 
 impl Interpreter {
-    pub fn new(ast: Ast) -> Self { Self { ast, envs: vec![HashMap::new()] } }
+    pub fn new(ast: Ast) -> Self { 
+        let mut interp = Self { ast, envs: vec![HashMap::new()], returning: false, ret_val: Value::Nil };
+        // Register built-in native function __rustc_println
+        if let Some(global) = interp.envs.last_mut() {
+            global.insert("__rustc_println".to_string(), Value::NativeFunction(|args: Vec<Value>| {
+                if args.is_empty() {
+                    println!("");
+                } else {
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 { print!(" "); }
+                        print!("{}", a);
+                    }
+                    println!("");
+                }
+                Value::Nil
+            }));
+            // Register built-in native function __rustc_readline
+            global.insert("__rustc_readline".to_string(), Value::NativeFunction(|args: Vec<Value>| {
+                // Optional prompt (printed without newline)
+                if !args.is_empty() {
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 { print!(" "); }
+                        print!("{}", a);
+                    }
+                    use std::io::Write as _;
+                    let _ = std::io::stdout().flush();
+                }
+                let mut line = String::new();
+                let _ = std::io::stdin().read_line(&mut line);
+                // Trim trailing \r and \n
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+                Value::String(line)
+            }));
+        }
+        interp
+    }
 
     // Evaluate all top-level expressions, returning their values
     pub fn interpret(&mut self) -> Vec<Value> {
@@ -89,7 +152,8 @@ impl Interpreter {
                 // Enter new scope
                 self.push_scope();
                 for expr in inner.iter() {
-                    self.eval(expr);
+                    let _ = self.eval(expr);
+                    if self.returning { break; }
                 }
                 // Exit scope
                 self.pop_scope();
@@ -117,11 +181,6 @@ impl Interpreter {
                 self.set_var(name, v);
                 Value::Nil
             }
-            Expr::Print(expr) => {
-                let rv = self.eval(expr);
-                println!("{}", rv);
-                Value::Nil
-            }
             Expr::Binary { left, op, right } => {
                 let lv = self.eval(left);
                 let rv = self.eval(right);
@@ -147,6 +206,29 @@ impl Interpreter {
                     other => panic!("Unsupported binary operator: {:?}", other),
                 }
             }
+            Expr::FuncDef { name, params, body } => {
+                let func = Rc::new(Function { params: params.clone(), body: body.clone() });
+                self.set_var(name, Value::Function(func));
+                Value::Nil
+            }
+            Expr::Call { callee, args } => {
+                let cal = self.eval(callee);
+                let mut argv = Vec::new();
+                for a in args {
+                    argv.push(self.eval(a));
+                }
+                match cal {
+                    Value::Function(f) => self.call_function(f, argv),
+                    Value::NativeFunction(f) => f(argv),
+                    other => panic!("Attempted to call non-function value: {:?}", other),
+                }
+            }
+            Expr::Return(expr) => {
+                let v = self.eval(expr);
+                self.returning = true;
+                self.ret_val = v;
+                Value::Nil
+            }
         }
     }
 
@@ -155,6 +237,8 @@ impl Interpreter {
             Value::Number(n) => n,
             Value::String(s) => s.parse::<f64>().unwrap_or_else(|_| panic!("Expected number, got string '{}'", s)),
             Value::Boolean(b) => if b { 1.0 } else { 0.0 },
+            Value::Function(_) => panic!("Cannot convert function to number"),
+            Value::NativeFunction(_) => panic!("Cannot convert native function to number"),
             Value::Nil => 0.0,
         }
     }
@@ -209,5 +293,33 @@ impl Interpreter {
         if let Some(current) = self.envs.last_mut() {
             current.insert(name.to_string(), value);
         }
+    }
+
+    fn call_function(&mut self, func: Rc<Function>, args: Vec<Value>) -> Value {
+        if args.len() != func.params.len() {
+            panic!("Expected {} arguments, got {}", func.params.len(), args.len());
+        }
+        // New call scope
+        self.push_scope();
+        // Bind parameters
+        for (i, pname) in func.params.iter().enumerate() {
+            if let Some(current) = self.envs.last_mut() {
+                current.insert(pname.clone(), args[i].clone());
+            }
+        }
+        // Execute body
+        let old_returning = self.returning;
+        let old_ret_val = self.ret_val.clone();
+        self.returning = false;
+        self.ret_val = Value::Nil;
+        let _ = self.eval(&func.body);
+        // Capture return value if set
+        let ret = if self.returning { self.ret_val.clone() } else { Value::Nil };
+        // Restore flags
+        self.returning = old_returning;
+        self.ret_val = old_ret_val;
+        // Pop call scope
+        self.pop_scope();
+        ret
     }
 }

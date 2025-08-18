@@ -3,8 +3,8 @@ a = [1, "foo", 2, 3]
 
 // len = a.len()
 // a.push("foo")
-// a[0] = "bar"
+a[0] = "bar"
 
 
-print(a[-1])
+print(a[0])
 

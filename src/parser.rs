@@ -18,6 +18,7 @@ pub enum Expr {
     Include(String, (u32, u32)),
     Array(Vec<Expr>, (u32, u32)),
     ArrayIndex(Box<Expr>, Box<Expr>, (u32, u32)),
+    AssignIndex { target: Box<Expr>, index: Box<Expr>, value: Box<Expr>, pos: (u32, u32) },
 }
 
 
@@ -150,15 +151,20 @@ impl Parser {
 
     fn assignment(&mut self) -> Expr {
         let expr = self.equality();
-
-
         if self.match_token(&[TokenType::Equal]) {
             let equals = self.previous();
             let value = self.assignment();
-            if let Expr::VarGet(name, _) = expr {
-                return Expr::Assign { name, value: Box::new(value), pos: equals.pos() };
+            match expr {
+                Expr::VarGet(name, _) => {
+                    return Expr::Assign { name, value: Box::new(value), pos: equals.pos() };
+                }
+                Expr::ArrayIndex(target, index, _) => {
+                    return Expr::AssignIndex { target, index, value: Box::new(value), pos: equals.pos() };
+                }
+                _ => {
+                    self.parse_error_at(equals.pos(), &format!("Invalid assignment target"));
+                }
             }
-            self.parse_error_at(equals.pos(), &format!("Invalid assignment target: {}", equals.value().unwrap_or("")) );
         }
         expr
     }

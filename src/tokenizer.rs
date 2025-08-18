@@ -7,7 +7,7 @@ pub enum TokenType {
 
     EqualEqual, BangEqual, Semicolon, Comma, Colon, Dot, Ellipsis, Less, LessEqual, Greater, GreaterEqual,
     Identifier, Number, String, Fn, If, Else, While, For, LeftCurly, RightCurly, Var, Return, Include,
-    StrType, IntType,
+    StrType, IntType, ArrayIndex,
 }
 
 #[derive(Debug, Clone)]

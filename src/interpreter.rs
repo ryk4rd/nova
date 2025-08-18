@@ -145,30 +145,6 @@ impl Interpreter {
                 }
                 Value::Nil
             }
-            Expr::ArrayIndex(arr, index, _) => {
-                let arr = self.eval(arr);
-                let index = self.eval(index);
-                match (arr, index) {
-                    (Value::List(items), Value::Number(n)) => {
-                        let mut item = items[n as usize].clone();
-                        if n == -1.0 {
-                            item = items.last().unwrap_or(&Value::Nil).clone();
-                        } else if n < -1.0 || n as usize >= items.len() {
-                            panic!("Array index out of bounds: {}", n);
-                        }
-                        item
-                    }
-                    (Value::List(_), _) => panic!("Cannot index non-list value"),
-                    _ => panic!("Cannot index non-list value"),
-                }
-            }
-            Expr::Array(items, _) => {
-                let mut arr = Vec::new();
-                for item in items {
-                    arr.push(self.eval(item));
-                }
-                Value::List(arr)
-            }
             Expr::If { cond, then, else_ } => {
                 let cond = self.eval(cond);
                 if self.is_truthy(&cond) {
@@ -201,6 +177,30 @@ impl Interpreter {
                 }
             }
 
+            Expr::Array(items, _) => {
+                let mut vals = Vec::with_capacity(items.len());
+                for it in items { vals.push(self.eval(it)); }
+                Value::List(vals)
+            }
+            Expr::ArrayIndex(target, index, pos) => {
+                let tv = self.eval(target);
+                let iv = self.eval(index);
+                match tv {
+                    Value::List(mut vec) => {
+                        let idx = self.as_number(iv) as isize;
+                        let len = vec.len() as isize;
+                        let real = if idx < 0 { len + idx } else { idx };
+                        if real < 0 || real as usize >= vec.len() {
+                            self.fatal_at(*pos, &format!("Index out of bounds"));
+                        }
+                        vec[real as usize].clone()
+                    }
+                    other => {
+                        self.fatal_at(*pos, &format!("Cannot index into {}", other));
+                    }
+                }
+            }
+
             Expr::Grouping(inner, _) => self.eval(inner),
             Expr::Unary { op, right, pos } => {
                 let rv = self.eval(right);
@@ -214,6 +214,32 @@ impl Interpreter {
                 let v = self.eval(value);
                 self.set_var(name, v);
                 Value::Nil
+            }
+            Expr::AssignIndex { target, index, value, pos } => {
+                // Currently only support assigning into a variable list like foo[0] = x
+                match &**target {
+                    Expr::VarGet(name, _) => {
+                        let mut base = match self.get_var(name) {
+                            Some(Value::List(vec)) => vec,
+                            Some(other) => self.fatal_at(*pos, &format!("Indexed assignment requires list, got {}", other)),
+                            None => self.fatal_at(*pos, &format!("Undefined variable '{}'", name)),
+                        };
+                        let idx_v = self.eval(index);
+                        let idx = self.as_number(idx_v) as isize;
+                        let len = base.len() as isize;
+                        let real = if idx < 0 { len + idx } else { idx };
+                        if real < 0 || real as usize >= base.len() {
+                            self.fatal_at(*pos, &format!("Index out of bounds"));
+                        }
+                        let val = self.eval(value);
+                        base[real as usize] = val;
+                        self.set_var(name, Value::List(base));
+                        Value::Nil
+                    }
+                    _ => {
+                        self.fatal_at(*pos, "Invalid assignment target before [index]");
+                    }
+                }
             }
             Expr::Binary { left, op, right, pos: _ } => {
                 let lv = self.eval(left);
